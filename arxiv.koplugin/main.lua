@@ -4,7 +4,6 @@ local NetworkMgr = require("ui/network/manager")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local lfs = require("libs/libkoreader-lfs")
-local http = require("socket.http")
 local ltn12 = require("ltn12")
 local logger = require("logger")
 local _ = require("gettext")
@@ -18,7 +17,7 @@ local CATEGORIES = {
 }
 
 local ARXIV_DOWNLOAD_DIR = "/mnt/us/documents/arxiv/"
-local ARXIV_API_URL = "http://export.arxiv.org/api/query"
+local ARXIV_API_URL = "https://export.arxiv.org/api/query"
 local MAX_RESULTS = 10
 
 local ArxivBrowser = WidgetContainer:extend{
@@ -79,10 +78,7 @@ function ArxivBrowser:fetchAndShowPapers(category, start)
 
     local response = {}
     local ok, err = pcall(function()
-        local _, code = http.request{
-            url = url,
-            sink = ltn12.sink.table(response),
-        }
+        local code = https_get(url, ltn12.sink.table(response))
         if code ~= 200 then
             error("HTTP " .. tostring(code))
         end
@@ -196,6 +192,8 @@ function ArxivBrowser:showPaperList(papers, category, start)
     UIManager:show(self.paper_menu)
 end
 
+local ARXIV_USER_AGENT = "KOReader-ArxivBrowser/1.0 (https://github.com/vruzicka830/read-arxiv-on-ereader)"
+
 local function https_get(url, sink, redirect_count)
     redirect_count = redirect_count or 0
     if redirect_count > 5 then error("Too many redirects") end
@@ -206,6 +204,7 @@ local function https_get(url, sink, redirect_count)
     local _, code, headers = https.request{
         url = url,
         sink = actual_sink,
+        headers = { ["User-Agent"] = ARXIV_USER_AGENT },
     }
     if (code == 301 or code == 302 or code == 303 or code == 307 or code == 308)
         and headers and headers.location then
