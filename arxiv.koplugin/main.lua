@@ -19,6 +19,26 @@ local CATEGORIES = {
 local ARXIV_DOWNLOAD_DIR = "/mnt/us/documents/arxiv/"
 local ARXIV_API_URL = "https://export.arxiv.org/api/query"
 local MAX_RESULTS = 10
+local ARXIV_USER_AGENT = "KOReader-ArxivBrowser/1.0 (https://github.com/vruzicka830/read-arxiv-on-ereader)"
+
+local function https_get(url, sink, redirect_count)
+    redirect_count = redirect_count or 0
+    if redirect_count > 5 then error("Too many redirects") end
+
+    local https = require("ssl.https")
+    local response_body = {}
+    local actual_sink = sink or ltn12.sink.table(response_body)
+    local _, code, headers = https.request{
+        url = url,
+        sink = actual_sink,
+        headers = { ["User-Agent"] = ARXIV_USER_AGENT },
+    }
+    if (code == 301 or code == 302 or code == 303 or code == 307 or code == 308)
+        and headers and headers.location then
+        return https_get(headers.location, sink, redirect_count + 1)
+    end
+    return code, headers
+end
 
 local ArxivBrowser = WidgetContainer:extend{
     name = "arxiv_browser",
@@ -77,8 +97,10 @@ function ArxivBrowser:fetchAndShowPapers(category, start)
         .. "&start=" .. start
 
     local response = {}
+    local response_sink = ltn12.sink.table(response)
+    local code, resp_headers
     local ok, err = pcall(function()
-        local code = https_get(url, ltn12.sink.table(response))
+        code, resp_headers = https_get(url, response_sink)
         if code ~= 200 then
             error("HTTP " .. tostring(code))
         end
@@ -87,9 +109,16 @@ function ArxivBrowser:fetchAndShowPapers(category, start)
     UIManager:close(loading)
 
     if not ok then
-        UIManager:show(InfoMessage:new{
-            text = _("Failed to fetch papers: ") .. tostring(err),
-        })
+        if code == 429 then
+            local retry = resp_headers and resp_headers["retry-after"]
+            local msg = _("arXiv rate limit reached. Please wait a moment and try again.")
+            if retry then msg = msg .. " (Retry after " .. tostring(retry) .. "s)" end
+            UIManager:show(InfoMessage:new{ text = msg })
+        else
+            UIManager:show(InfoMessage:new{
+                text = _("Failed to fetch papers: ") .. tostring(err),
+            })
+        end
         return
     end
 
@@ -190,27 +219,6 @@ function ArxivBrowser:showPaperList(papers, category, start)
         is_popout = false,
     }
     UIManager:show(self.paper_menu)
-end
-
-local ARXIV_USER_AGENT = "KOReader-ArxivBrowser/1.0 (https://github.com/vruzicka830/read-arxiv-on-ereader)"
-
-local function https_get(url, sink, redirect_count)
-    redirect_count = redirect_count or 0
-    if redirect_count > 5 then error("Too many redirects") end
-
-    local https = require("ssl.https")
-    local response_body = {}
-    local actual_sink = sink or ltn12.sink.table(response_body)
-    local _, code, headers = https.request{
-        url = url,
-        sink = actual_sink,
-        headers = { ["User-Agent"] = ARXIV_USER_AGENT },
-    }
-    if (code == 301 or code == 302 or code == 303 or code == 307 or code == 308)
-        and headers and headers.location then
-        return https_get(headers.location, sink, redirect_count + 1)
-    end
-    return code
 end
 
 function ArxivBrowser:downloadAndOpenPaper(paper)
